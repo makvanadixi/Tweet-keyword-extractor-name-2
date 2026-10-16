@@ -1,0 +1,208 @@
+%%html
+<!DOCTYPE html>
+<html lang="en">
+...
+(poo ro code ahi)
+...
+</html>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tweet keyword extractor</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #eef1f6; color: #1c2333;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  h1 { margin: 10px 0 6px; font-size: 32px; }
+  .sub { margin: 0 0 24px; color: #5b6478; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 20px; align-items: start; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #fff; border: 1px solid #dde2ec; border-radius: 16px; padding: 20px; }
+  label { display: block; font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+  textarea {
+    width: 100%; height: 260px; resize: vertical; padding: 10px 12px;
+    border: 1px solid #c9d0de; border-radius: 10px; font: inherit; font-size: 14px;
+  }
+  textarea:focus, input:focus { outline: 2px solid #3b5bff; border-color: #3b5bff; }
+  .row { display: flex; gap: 16px; margin-top: 16px; }
+  .row > div:first-child { flex: 1; }
+  .box { border: 1px solid #c9d0de; border-radius: 10px; padding: 14px 12px; font-size: 14px; background: #fff; }
+  input[type=number] { width: 100%; padding: 14px 12px; border: 1px solid #c9d0de; border-radius: 10px; font: inherit; }
+  .hint { color: #5b6478; font-size: 13px; margin: 10px 0 18px; }
+  button {
+    font: inherit; font-weight: 700; font-size: 14px; cursor: pointer;
+    padding: 12px 18px; border-radius: 10px; border: 2px solid #3b5bff;
+  }
+  .primary { background: #3b5bff; color: #fff; }
+  .primary:hover { background: #2a47e0; }
+  .ghost { background: #fff; color: #3b5bff; margin-left: 8px; }
+  .ghost:hover { background: #eef1ff; }
+  .placeholder { color: #5b6478; font-size: 14px; }
+  h2 { font-size: 16px; margin: 18px 0 10px; }
+  h2:first-child { margin-top: 0; }
+  .item { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 14px; }
+  .item .name { width: 150px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { flex: 1; background: #e8ecf5; border-radius: 6px; height: 14px; overflow: hidden; }
+  .bar span { display: block; height: 100%; background: #3b5bff; border-radius: 6px; }
+  .bar.tag span { background: #14a38b; }
+  .bar.phr span { background: #e0802b; }
+  .count { width: 28px; text-align: right; color: #5b6478; font-variant-numeric: tabular-nums; }
+  .stats { color: #5b6478; font-size: 13px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Tweet keyword extractor</h1>
+  <p class="sub">Paste tweets or upload a file. See which words, phrases and hashtags stand out.</p>
+
+  <div class="grid">
+    <div class="card">
+      <label for="tweets">Tweets (one per line)</label>
+      <textarea id="tweets" placeholder="Paste tweets here, one per line..."></textarea>
+
+      <div class="row">
+        <div>
+          <label for="file">Or upload .txt / .csv</label>
+          <div class="box"><input type="file" id="file" accept=".txt,.csv"></div>
+        </div>
+        <div style="width:110px">
+          <label for="topN">Results</label>
+          <input type="number" id="topN" value="10" min="1" max="50">
+        </div>
+      </div>
+      <p class="hint">Each line of the file is treated as one tweet.</p>
+
+      <button class="primary" id="extractBtn">Extract keywords</button>
+      <button class="ghost" id="sampleBtn">Load sample tweets</button>
+    </div>
+
+    <div class="card" id="results">
+      <div class="placeholder">Results will appear here.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SAMPLE = [
+    "Machine learning models need clean data before training #datascience #ml",
+    "Climate change report warns of rising sea levels #climate",
+    "Renewable energy investment hits a record high this year #climate #energy",
+    "Solar panels and wind turbines are cutting energy costs #energy",
+    "Machine learning will change healthcare diagnosis #ml #health",
+    "Clean data beats fancy models every time #datascience",
+    "Climate change needs action on renewable energy now #climate #energy",
+    "Healthcare teams use machine learning to spot disease early #health #ml"
+  ].join("\n");
+
+  const STOP = new Set(("a about above after again all also am an and any are as at be because been before being " +
+    "below between both but by can could did do does doing down during each few for from further had has have " +
+    "having he her here hers him his how i if in into is it its just me more most my no nor not now of off on " +
+    "once only or other our out over own same she should so some such than that the their them then there these " +
+    "they this those through to too under until up very was we were what when where which while who whom why " +
+    "will with would you your rt via amp new will every time year this").split(/\s+/));
+
+  const $ = id => document.getElementById(id);
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function topEntries(map, n) {
+    return [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n);
+  }
+
+  function analyze(text, n) {
+    const tweets = text.split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+    const words = new Map(), tags = new Map(), phrases = new Map();
+
+    tweets.forEach(raw => {
+      let t = raw.toLowerCase()
+        .replace(/https?:\/\/\S+/g, " ")
+        .replace(/@\w+/g, " ");
+
+      (t.match(/#[\p{L}\p{N}_]+/gu) || []).forEach(h => tags.set(h, (tags.get(h) || 0) + 1));
+
+      t = t.replace(/#[\p{L}\p{N}_]+/gu, " ");
+      const tokens = t.match(/[\p{L}\p{N}']+/gu) || [];
+
+      tokens.forEach(w => {
+        if (w.length > 2 && !STOP.has(w)) words.set(w, (words.get(w) || 0) + 1);
+      });
+
+      for (let i = 0; i < tokens.length - 1; i++) {
+        const a = tokens[i], b = tokens[i + 1];
+        if (a.length > 2 && b.length > 2 && !STOP.has(a) && !STOP.has(b)) {
+          const p = a + " " + b;
+          phrases.set(p, (phrases.get(p) || 0) + 1);
+        }
+      }
+    });
+
+    // keep only phrases that repeat
+    for (const [k, v] of phrases) if (v < 2) phrases.delete(k);
+
+    return {
+      count: tweets.length,
+      words: topEntries(words, n),
+      tags: topEntries(tags, n),
+      phrases: topEntries(phrases, n)
+    };
+  }
+
+  function section(title, entries, cls) {
+    if (!entries.length) {
+      return `<h2>${title}</h2><div class="placeholder">Nothing found.</div>`;
+    }
+    const max = entries[0][1];
+    const rows = entries.map(([name, c]) => `
+      <div class="item">
+        <div class="name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+        <div class="bar ${cls}"><span style="width:${Math.max(6, (c / max) * 100)}%"></span></div>
+        <div class="count">${c}</div>
+      </div>`).join("");
+    return `<h2>${title}</h2>${rows}`;
+  }
+
+  function run() {
+    const text = $("tweets").value;
+    let n = parseInt($("topN").value, 10);
+    if (isNaN(n) || n < 1) n = 10;
+    if (n > 50) n = 50;
+
+    if (!text.trim()) {
+      $("results").innerHTML = '<div class="placeholder">Please paste some tweets or upload a file first.</div>';
+      return;
+    }
+
+    const r = analyze(text, n);
+    $("results").innerHTML =
+      `<div class="stats">${r.count} tweet${r.count === 1 ? "" : "s"} analysed</div>` +
+      section("Top words", r.words, "") +
+      section("Top phrases (2 words, repeated)", r.phrases, "phr") +
+      section("Top hashtags", r.tags, "tag");
+  }
+
+  $("extractBtn").addEventListener("click", run);
+
+  $("sampleBtn").addEventListener("click", () => {
+    $("tweets").value = SAMPLE;
+    run();
+  });
+
+  $("file").addEventListener("change", e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => { $("tweets").value = reader.result; run(); };
+    reader.readAsText(f);
+  });
+</script>
+</body>
+</html>	
